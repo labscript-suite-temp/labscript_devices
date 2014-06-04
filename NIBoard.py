@@ -1,6 +1,6 @@
 import numpy as np
 from labscript_devices import RunviewerParser
-from labscript import IntermediateDevice, AnalogOut, DigitalOut, AnalogIn, bitfield
+from labscript import IntermediateDevice, AnalogOut, DigitalOut, AnalogIn, bitfield, config
 import labscript_utils.h5_lock, h5py
 
 class NIBoard(IntermediateDevice):
@@ -21,7 +21,7 @@ class NIBoard(IntermediateDevice):
     def add_device(self,output):
         # TODO: check there are no duplicates, check that connection
         # string is formatted correctly.
-        Device.add_device(self,output)
+        IntermediateDevice.add_device(self,output)
         
     def convert_bools_to_bytes(self,digitals):
         """converts digital outputs to an array of bitfields stored
@@ -37,7 +37,7 @@ class NIBoard(IntermediateDevice):
         return bits
             
     def generate_code(self, hdf5_file):
-        Device.generate_code(self, hdf5_file)
+        IntermediateDevice.generate_code(self, hdf5_file)
         analogs = {}
         digitals = {}
         inputs = {}
@@ -50,7 +50,7 @@ class NIBoard(IntermediateDevice):
                 inputs[device.connection] = device
             else:
                 raise Exception('Got unexpected device.')
-        analog_out_table = empty((len(self.parent_device.times[self.clock_type]),len(analogs)), dtype=float32)
+        analog_out_table = np.empty((len(self.parent_device.times[self.clock_type]),len(analogs)), dtype=np.float32)
         analog_connections = analogs.keys()
         analog_connections.sort()
         analog_out_attrs = []
@@ -77,7 +77,7 @@ class NIBoard(IntermediateDevice):
         # to all come out empty.
         acquisitions_table_dtypes = [('connection','a256'), ('label','a256'), ('start',float),
                                      ('stop',float), ('wait label','a256'),('scale factor',float), ('units','a256')]
-        acquisition_table= empty(len(acquisitions), dtype=acquisitions_table_dtypes)
+        acquisition_table= np.empty(len(acquisitions), dtype=acquisitions_table_dtypes)
         for i, acq in enumerate(acquisitions):
             acquisition_table[i] = acq
         digital_out_table = []
