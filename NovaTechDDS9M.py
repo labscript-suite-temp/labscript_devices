@@ -157,6 +157,11 @@ class NovaTechDDS9M(IntermediateDevice):
             static_table['amp%d'%connection] = dds.amplitude.raw_output[0]
             static_table['phase%d'%connection] = dds.phase.raw_output[0]
             
+        if self.update_mode == 'asynchronous':
+            # Duplicate the first line. Otherwise, we are one step ahead in the table
+            # from the start of a run. This problem is not completely understood, but this
+            # fixes it:
+            out_table = np.concatenate([out_table[0:1], out_table])
         grp = hdf5_file.create_group('/devices/'+self.name)
         grp.attrs['frequency_scale_factor'] = 10
         grp.attrs['amplitude_scale_factor'] = 1023
