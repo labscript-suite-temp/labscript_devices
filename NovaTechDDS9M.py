@@ -24,25 +24,41 @@ import numpy as np
 import labscript_utils.h5_lock, h5py
 import labscript_utils.properties
 
+bauds = {9600: b'Kb 78', 
+         19200: b'Kb 3c',
+         38400: b'Kb 1e',
+         57600: b'Kb 14',
+         115200: b'Kb 0a'}
 
 class NovaTechDDS9M(IntermediateDevice):
+    """
+    This class is initilzed with the key word argument  
+    'update_mode' -- synchronous or asynchronous\
+    'baud_rate',  -- operating baud rate
+    'default_baud_rate' -- assumed baud rate at startup
+    """
     description = 'NT-DDS9M'
     allowed_children = [DDS, StaticDDS]
     clock_limit = 9990 # This is a realistic estimate of the max clock rate (100us for TS/pin10 processing to load next value into buffer and 100ns pipeline delay on pin 14 edge to update output values)
 
     @set_passed_properties(
-        property_names = {'connection_table_properties': ['update_mode', 'synchronous_first_line_repeat', 'phase_mode']}
+        property_names = {'connection_table_properties': ['com_port', 'baud_rate', 'default_baud_rate', 'update_mode', 'synchronous_first_line_repeat', 'phase_mode']}
         )
     def __init__(self, name, parent_device, 
-                 com_port = "", baud_rate=115200,
-                 update_mode='synchronous', synchronous_first_line_repeat=False,
-                 phase_mode='default', **kwargs):
+                 com_port = "", baud_rate=115200, default_baud_rate=None, update_mode='synchronous', synchronous_first_line_repeat=False, phase_mode='default', **kwargs):
 
         IntermediateDevice.__init__(self, name, parent_device, **kwargs)
         self.BLACS_connection = '%s,%s'%(com_port, str(baud_rate))
+
         if not update_mode in ['synchronous', 'asynchronous']:
             raise LabscriptError('update_mode must be \'synchronous\' or \'asynchronous\'')            
         
+        if not baud_rate in bauds:     
+            raise LabscriptError('baud_rate must be one of {0}'.format(bauds.keys()))            
+
+        if not default_baud_rate in bauds and default_baud_rate is not None:     
+            raise LabscriptError('default_baud_rate must be one of {0} or None (to indicate no default)'.format(bauds.keys()))            
+
         if not phase_mode in ['default', 'aligned', 'continuous']:
             raise LabscriptError('phase_mode must be \'default\', \'aligned\' or \'continuous\'')
 
@@ -237,20 +253,29 @@ class NovatechDDS9MTab(DeviceTab):
         
         self.phase_mode = connection_table_properties.get('phase_mode', 'default')
 
-        # Store the COM port to be used
+        self.com_port = connection_table_properties.get('com_port', None)
+        self.baud_rate = connection_table_properties.get('baud_rate', None)
+        self.default_baud_rate = connection_table_properties.get('default_baud_rate', None)
+        self.update_mode = connection_table_properties.get('update_mode', 'synchronous')
+        
+        # Backward compat:
         blacs_connection =  str(connection_object.BLACS_connection)
         if ',' in blacs_connection:
-            self.com_port, baud_rate = blacs_connection.split(',')
-            self.baud_rate = int(baud_rate)
+            com_port, baud_rate = blacs_connection.split(',')
+            if self.com_port is None:
+                self.com_port = com_port
+            if self.baud_rate is None:
+                self.baud_rate = int(baud_rate)
         else:
             self.com_port = blacs_connection
             self.baud_rate = 115200
         
-        self.update_mode = connection_object.properties.get('update_mode', 'synchronous')
-        
+
+
         # Create and set the primary worker
         self.create_worker("main_worker",NovatechDDS9mWorker,{'com_port':self.com_port,
                                                               'baud_rate': self.baud_rate,
+                                                              'default_baud_rate': self.default_baud_rate,
                                                               'update_mode': self.update_mode,
                                                               'phase_mode': self.phase_mode})
         self.primary_worker = "main_worker"
@@ -267,8 +292,16 @@ class NovatechDDS9mWorker(Worker):
         global h5py; import labscript_utils.h5_lock, h5py
         self.smart_cache = {'STATIC_DATA': None, 'TABLE_DATA': ''}
         
-        self.connection = serial.Serial(self.com_port, baudrate = self.baud_rate, timeout=0.1)
-        self.connection.readlines()
+        # if requested start with a default baud rate and update
+        if self.default_baud_rate is not None:
+            self.connection = serial.Serial(self.com_port, baudrate=self.default_baud_rate, timeout=0.1)
+            self.connection.write(b'{}\n'.format(bauds[self.baud_rate]))
+            
+            # Flush any junk from the buffer
+            self.connection.readlines()
+            self.connection.close()
+        
+        self.connection = serial.Serial(self.com_port, baudrate=self.baud_rate, timeout=0.1)
         
         # Set phase mode method
         phase_mode_commands = {
@@ -284,7 +317,7 @@ class NovatechDDS9mWorker(Worker):
             # if echo was enabled, then the command to disable it echos back at us!
             response = self.connection.readline()
         if response != b"OK\r\n":
-            raise Exception('Error: Failed to execute command: "e d". Cannot connect to the device.')
+            raise Exception('Error: Failed to execute command: "e d", recieved "%s".'%response)
 
         self.connection.write(b'I a\r\n')
         if self.connection.readline() != b"OK\r\n":
@@ -484,6 +517,12 @@ class NovatechDDS9mWorker(Worker):
         return True
                      
     def shutdown(self):
+        
+        # return to the default baud rate
+        if self.default_baud_rate is not None:
+            self.connection.write(b'{}\n'.format(bauds[self.default_baud_rate]))
+            self.connection.readlines()        
+        
         self.connection.close()
         
         
